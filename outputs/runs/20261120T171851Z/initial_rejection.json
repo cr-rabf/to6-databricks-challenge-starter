@@ -1,0 +1,27 @@
+{
+  "run_id": "20261120T171851Z",
+  "run_started_utc": "2026-11-20T17:18:51.751646+00:00",
+  "notebook_url": "https://dbc-48a16403-f66f.cloud.databricks.com/?o=7474648218609329#notebook/127024866558081",
+  "notebook_path": "/Users/steven.c.rose.irs@catalyte.ai/to6-databricks-challenge-starter/notebook",
+  "table": "training.to6_challenge3_inputs.returns_initial",
+  "delta_version": 2,
+  "rows_checked": 13,
+  "rules": [
+    "completeness: return_id, tax_year, income, deduction are not null",
+    "uniqueness: each return_id appears exactly once",
+    "nonnegative: income and deduction are >= 0"
+  ],
+  "violations_by_rule": {
+    "completeness": 1,
+    "uniqueness": 2,
+    "nonnegative": 0
+  },
+  "affected_return_ids": [
+    "R01",
+    "R02"
+  ],
+  "decision": "rejected",
+  "next_action": "Do not repair or drop records. Report the affected records to the data owner and assess returns_corrected with the same rules.",
+  "affected_records_file": "initial_rejected_records.csv",
+  "affected_record_rows": 3
+}

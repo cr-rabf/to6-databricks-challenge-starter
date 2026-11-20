@@ -1,0 +1,97 @@
+{
+  "run_id": "20261120T171851Z",
+  "run_started_utc": "2026-11-20T17:18:51.751646+00:00",
+  "notebook_url": "https://dbc-48a16403-f66f.cloud.databricks.com/?o=7474648218609329#notebook/127024866558081",
+  "notebook_path": "/Users/steven.c.rose.irs@catalyte.ai/to6-databricks-challenge-starter/notebook",
+  "batch_assessments": {
+    "returns_initial": {
+      "table": "training.to6_challenge3_inputs.returns_initial",
+      "delta_version": 2,
+      "rows_checked": 13,
+      "rules": [
+        "completeness: return_id, tax_year, income, deduction are not null",
+        "uniqueness: each return_id appears exactly once",
+        "nonnegative: income and deduction are >= 0"
+      ],
+      "violations_by_rule": {
+        "completeness": 1,
+        "uniqueness": 2,
+        "nonnegative": 0
+      },
+      "affected_return_ids": [
+        "R01",
+        "R02"
+      ],
+      "decision": "rejected",
+      "next_action": "Do not repair or drop records. Report the affected records to the data owner and assess returns_corrected with the same rules."
+    },
+    "returns_corrected": {
+      "table": "training.to6_challenge3_inputs.returns_corrected",
+      "delta_version": 2,
+      "rows_checked": 12,
+      "rules": [
+        "completeness: return_id, tax_year, income, deduction are not null",
+        "uniqueness: each return_id appears exactly once",
+        "nonnegative: income and deduction are >= 0"
+      ],
+      "violations_by_rule": {
+        "completeness": 0,
+        "uniqueness": 0,
+        "nonnegative": 0
+      },
+      "affected_return_ids": [],
+      "decision": "accepted"
+    }
+  },
+  "accepted_table": "training.to6_challenge3_inputs.returns_corrected",
+  "return_features": {
+    "table": "training.to6_c3_48f0f0239a0e.return_features",
+    "delta_version": 3,
+    "rows": 12,
+    "ratio_definition": "deduction / income; NULL when income = 0",
+    "nonzero_check": {
+      "return_id": "R01",
+      "expected": 0.2,
+      "saved": 0.2
+    },
+    "zero_income_null_ratio": [
+      "R03",
+      "R09"
+    ],
+    "snapshot_file": "return_features.csv",
+    "snapshot_sha256": "382f97d69814056f81e58f6166b4b5761e46a17cfeb682046fd22b785827b2fb"
+  },
+  "year_tables": {
+    "features_train": {
+      "table": "training.to6_c3_48f0f0239a0e.features_train",
+      "tax_year": 2022,
+      "rows": 4,
+      "delta_version": 0
+    },
+    "features_validation": {
+      "table": "training.to6_c3_48f0f0239a0e.features_validation",
+      "tax_year": 2023,
+      "rows": 4,
+      "delta_version": 0
+    },
+    "features_test": {
+      "table": "training.to6_c3_48f0f0239a0e.features_test",
+      "tax_year": 2024,
+      "rows": 4,
+      "delta_version": 0
+    }
+  },
+  "snapshots_sha256": {
+    "return_features.csv": "382f97d69814056f81e58f6166b4b5761e46a17cfeb682046fd22b785827b2fb",
+    "features_train.csv": "85edc0fe84a534383e8d32e28e5dd0665ed615664095004ac3cd2bc64151f11b",
+    "features_validation.csv": "4f997086def1a1c98d298d5ddf6679dd357cf8ca02e318e8d1f8b76f09077ba8",
+    "features_test.csv": "f133daffb5d300f2c7fe1e8418ac9aea59a06f7345b2468c6710ddc2a8e10052"
+  },
+  "checks": {
+    "file": "checks.csv",
+    "total": 34,
+    "passed": 34
+  },
+  "run_completed_utc": "2026-11-20T17:19:36.917686+00:00",
+  "status": "succeeded"
+}

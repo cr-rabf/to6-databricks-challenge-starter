@@ -1,0 +1,35 @@
+stage,check,expected,actual,passed
+3c,row count equals accepted source,12,12,True
+3c,return_id unique,12,12,True
+3c,source IDs missing from features,0,0,True
+3c,feature IDs not in source,0,0,True
+3e,schema is exactly the three contract columns,"[('return_id', 'string'), ('tax_year', 'int'), ('deduction_to_income', 'double')]","[('return_id', 'string'), ('tax_year', 'int'), ('deduction_to_income', 'double')]",True
+3e,row count equals accepted source,12,12,True
+3e,return_id unique,12,12,True
+3e,same return_id set as source,"['R01', 'R02', 'R03', 'R04', 'R05', 'R06', 'R07', 'R08', 'R09', 'R10', 'R11', 'R12']","['R01', 'R02', 'R03', 'R04', 'R05', 'R06', 'R07', 'R08', 'R09', 'R10', 'R11', 'R12']",True
+3e,no null return_id or tax_year,0,0,True
+3e,rows per tax_year match source,"{2022: 4, 2023: 4, 2024: 4}","{2022: 4, 2023: 4, 2024: 4}",True
+3e,R01 expected value is hand-derived 20/100,0.2,0.2,True
+3e,R01 saved ratio equals expected,0.2,0.2,True
+3e,zero-income returns present with null ratio,"['R03', 'R09']: null","{'R03': None, 'R09': None}",True
+3e,all ratios match Python recompute from source,[],[],True
+4b,features_train: schema is the three contract columns,"[('return_id', 'string'), ('tax_year', 'int'), ('deduction_to_income', 'double')]","[('return_id', 'string'), ('tax_year', 'int'), ('deduction_to_income', 'double')]",True
+4b,features_train: rows with a tax_year other than 2022,0,0,True
+4b,features_train: rows equal return_features rows for 2022,4,4,True
+4b,features_train: one row per return_id (no appended copies),4,4,True
+4b,features_train: latest write replaced the table,"['CREATE OR REPLACE TABLE AS SELECT', 'CREATE TABLE AS SELECT']","{'version': 0, 'operation': 'CREATE OR REPLACE TABLE AS SELECT'}",True
+4b,features_validation: schema is the three contract columns,"[('return_id', 'string'), ('tax_year', 'int'), ('deduction_to_income', 'double')]","[('return_id', 'string'), ('tax_year', 'int'), ('deduction_to_income', 'double')]",True
+4b,features_validation: rows with a tax_year other than 2023,0,0,True
+4b,features_validation: rows equal return_features rows for 2023,4,4,True
+4b,features_validation: one row per return_id (no appended copies),4,4,True
+4b,features_validation: latest write replaced the table,"['CREATE OR REPLACE TABLE AS SELECT', 'CREATE TABLE AS SELECT']","{'version': 0, 'operation': 'CREATE OR REPLACE TABLE AS SELECT'}",True
+4b,features_test: schema is the three contract columns,"[('return_id', 'string'), ('tax_year', 'int'), ('deduction_to_income', 'double')]","[('return_id', 'string'), ('tax_year', 'int'), ('deduction_to_income', 'double')]",True
+4b,features_test: rows with a tax_year other than 2024,0,0,True
+4b,features_test: rows equal return_features rows for 2024,4,4,True
+4b,features_test: one row per return_id (no appended copies),4,4,True
+4b,features_test: latest write replaced the table,"['CREATE OR REPLACE TABLE AS SELECT', 'CREATE TABLE AS SELECT']","{'version': 0, 'operation': 'CREATE OR REPLACE TABLE AS SELECT'}",True
+4b,all splits: total rows equal accepted returns,12,12,True
+4b,all splits: no return_id in more than one table,12,12,True
+4b,return_features rows missing from the splits (IDs and values),0,0,True
+4b,split rows not in return_features (IDs and values),0,0,True
+4b,return_features: latest write replaced the table,"['CREATE OR REPLACE TABLE AS SELECT', 'CREATE TABLE AS SELECT']","{'version': 2, 'operation': 'CREATE OR REPLACE TABLE AS SELECT'}",True

@@ -1,0 +1,101 @@
+{
+  "generated_by_run": "20261120T172041Z",
+  "method": "byte-level SHA-256 and row-by-row multiset diff of the sorted snapshot CSVs saved in each run folder",
+  "skipped_runs": [
+    {
+      "run_id": "20261120T161138Z",
+      "run_started_utc": "2026-11-20T16:11:38.049772+00:00",
+      "reason": "partial run: run.json has no status 'succeeded' (stopped before Outcome 4 completed); not one of the two successful runs"
+    }
+  ],
+  "compared": true,
+  "runs": {
+    "run_a": {
+      "run_id": "20261120T171851Z",
+      "run_started_utc": "2026-11-20T17:18:51.751646+00:00",
+      "run_completed_utc": "2026-11-20T17:19:36.917686+00:00",
+      "notebook_url": "https://dbc-48a16403-f66f.cloud.databricks.com/?o=7474648218609329#notebook/127024866558081"
+    },
+    "run_b": {
+      "run_id": "20261120T172041Z",
+      "run_started_utc": "2026-11-20T17:20:41.463169+00:00",
+      "run_completed_utc": "2026-11-20T17:21:21.542668+00:00",
+      "notebook_url": "https://dbc-48a16403-f66f.cloud.databricks.com/?o=7474648218609329#notebook/127024866558081"
+    }
+  },
+  "tables": {
+    "return_features.csv": {
+      "sha256_run_a": "382f97d69814056f81e58f6166b4b5761e46a17cfeb682046fd22b785827b2fb",
+      "sha256_run_b": "382f97d69814056f81e58f6166b4b5761e46a17cfeb682046fd22b785827b2fb",
+      "rows_run_a": 12,
+      "rows_run_b": 12,
+      "header_match": true,
+      "return_ids": [
+        "R01",
+        "R02",
+        "R03",
+        "R04",
+        "R05",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R10",
+        "R11",
+        "R12"
+      ],
+      "rows_only_in_run_a": [],
+      "rows_only_in_run_b": [],
+      "match": true
+    },
+    "features_train.csv": {
+      "sha256_run_a": "85edc0fe84a534383e8d32e28e5dd0665ed615664095004ac3cd2bc64151f11b",
+      "sha256_run_b": "85edc0fe84a534383e8d32e28e5dd0665ed615664095004ac3cd2bc64151f11b",
+      "rows_run_a": 4,
+      "rows_run_b": 4,
+      "header_match": true,
+      "return_ids": [
+        "R01",
+        "R02",
+        "R03",
+        "R04"
+      ],
+      "rows_only_in_run_a": [],
+      "rows_only_in_run_b": [],
+      "match": true
+    },
+    "features_validation.csv": {
+      "sha256_run_a": "4f997086def1a1c98d298d5ddf6679dd357cf8ca02e318e8d1f8b76f09077ba8",
+      "sha256_run_b": "4f997086def1a1c98d298d5ddf6679dd357cf8ca02e318e8d1f8b76f09077ba8",
+      "rows_run_a": 4,
+      "rows_run_b": 4,
+      "header_match": true,
+      "return_ids": [
+        "R05",
+        "R06",
+        "R07",
+        "R08"
+      ],
+      "rows_only_in_run_a": [],
+      "rows_only_in_run_b": [],
+      "match": true
+    },
+    "features_test.csv": {
+      "sha256_run_a": "f133daffb5d300f2c7fe1e8418ac9aea59a06f7345b2468c6710ddc2a8e10052",
+      "sha256_run_b": "f133daffb5d300f2c7fe1e8418ac9aea59a06f7345b2468c6710ddc2a8e10052",
+      "rows_run_a": 4,
+      "rows_run_b": 4,
+      "header_match": true,
+      "return_ids": [
+        "R09",
+        "R10",
+        "R11",
+        "R12"
+      ],
+      "rows_only_in_run_a": [],
+      "rows_only_in_run_b": [],
+      "match": true
+    }
+  },
+  "match": true
+}

@@ -1,0 +1,4 @@
+source_table,return_id,taxpayer_id,tax_year,income,deduction,rule,reason
+training.to6_challenge3_inputs.returns_initial,R01,**,2022,100,20,uniqueness,return_id appears 2 times in batch
+training.to6_challenge3_inputs.returns_initial,R01,**,2022,100,20,uniqueness,return_id appears 2 times in batch
+training.to6_challenge3_inputs.returns_initial,R02,**,2022,,33,completeness,required field income is null

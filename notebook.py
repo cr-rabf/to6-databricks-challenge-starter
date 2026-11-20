@@ -314,12 +314,15 @@ FEATURES_TABLE = f"{OUTPUT_SCHEMA}.return_features"
 EXPECTED_SCHEMA = [("return_id", "string"), ("tax_year", "int"), ("deduction_to_income", "double")]
 TOL = 1e-12
 
+CHECK_RESULTS = []  # every check in this run; saved to outputs/runs/<run_id>/checks.csv in Outcome 4
+
 def run_checks(title, checks):
-    """Show each check with expected and actual values, then stop the run if any failed."""
+    """Show each check with expected and actual values, record it for the run evidence, stop if any failed."""
+    rows = [(title.split(".")[0], c, str(e), str(a), bool(p)) for c, e, a, p in checks]
+    CHECK_RESULTS.extend(rows)
     print(title)
-    display(spark.createDataFrame([(c, str(e), str(a), bool(p)) for c, e, a, p in checks],
-                                  "check string, expected string, actual string, passed boolean"))
-    failed = [c for c, _, _, p in checks if not p]
+    display(spark.createDataFrame(rows, "stage string, check string, expected string, actual string, passed boolean"))
+    failed = [r[1] for r in rows if not r[-1]]
     if failed:
         raise AssertionError(f"{title} failed: {failed}")
 
@@ -435,7 +438,198 @@ print(json.dumps(run_manifest["return_features"], indent=2))
 # MAGIC ## 4. Make the handoff usable
 # MAGIC Save the required year tables. Keep references and IDs-and-values evidence for two successful runs.
 # MAGIC Write SUBMISSION.md and the small exports inside this Databricks Git folder.
+# MAGIC
+# MAGIC **Year tables** (built from the saved `return_features`, overwritten on each run):
+# MAGIC
+# MAGIC | Table | tax_year |
+# MAGIC | --- | --- |
+# MAGIC | `features_train` | 2022 |
+# MAGIC | `features_validation` | 2023 |
+# MAGIC | `features_test` | 2024 |
+# MAGIC
+# MAGIC **Checks (4b), read back from the catalog:**
+# MAGIC * **Each table:** exact schema, no rows from another year, the same row count as `return_features` for that year, one row per `return_id`, and a latest Delta write that replaced the table rather than appending.
+# MAGIC * **Across tables:** the total equals the 12 accepted returns, no `return_id` is in two tables, and the union equals `return_features` on IDs and values in both directions.
+# MAGIC
+# MAGIC **Run evidence:**
+# MAGIC * **4c:** a snapshot CSV of each year table in `outputs/runs/<run_id>/`, plus stable copies in `outputs/`.
+# MAGIC * **4d:** `checks.csv`, holding every 3c, 3e and 4b check. `run.json` is marked `status: succeeded`, with a completion time, only at the very end. A run that stops earlier stays partial.
+# MAGIC * **4e:** `outputs/run_comparison.json` compares the **two latest successful runs**, using the saved snapshot files rather than the live tables. For each of the four tables it records the byte-level SHA-256 and a row-by-row diff (IDs and values) in both directions. Partial runs are listed as skipped, with the reason. A mismatch stops the run.
 
 # COMMAND ----------
 
-# Your implementation, rerun comparison and exports here.
+# DBTITLE 1,Save year tables, record run evidence, compare two runs
+# Outcome 4: year tables from the saved features, this run's evidence, and the two-run comparison.
+import csv
+import datetime
+import hashlib
+import io
+import json
+from collections import Counter
+import pandas as pd
+from pyspark.sql import functions as F
+
+SPLITS = {"features_train": 2022, "features_validation": 2023, "features_test": 2024}
+SPLIT_TABLES = {name: f"{OUTPUT_SCHEMA}.{name}" for name in SPLITS}
+REPLACE_OPS = {"CREATE OR REPLACE TABLE AS SELECT", "CREATE TABLE AS SELECT"}
+RUNS_ROOT = repo_root / "outputs" / "runs"
+SNAPSHOT_FILES = ["return_features.csv"] + [f"{name}.csv" for name in SPLITS]
+
+def save_table(df, table, comment):
+    """Replace the table (never append) and describe it in the Catalog."""
+    df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(table)
+    spark.sql(f"COMMENT ON TABLE {table} IS '{comment}'")
+
+def last_write(table):
+    """Latest data-writing operation in the table's Delta history (comment-only changes skipped)."""
+    for r in spark.sql(f"DESCRIBE HISTORY {table}").orderBy(F.col("version").desc()).collect():
+        if r["operation"] != "SET TBLPROPERTIES":
+            return {"version": r["version"], "operation": r["operation"]}
+    return None
+
+# 4a. Build each year table from the saved, verified return_features (not from the raw source).
+features_saved = spark.table(FEATURES_TABLE)
+for name, year in SPLITS.items():
+    save_table(features_saved.filter(F.col("tax_year") == year), SPLIT_TABLES[name],
+               f"{name}: return_features rows with tax_year = {year}. Overwritten on each run.")
+print("4a. Saved year tables:", list(SPLIT_TABLES.values()))
+
+# 4b. Read the year tables back and check year assignment, one copy per return and no appended copies.
+saved_splits = {name: spark.table(table) for name, table in SPLIT_TABLES.items()}
+all_splits = None
+for df in saved_splits.values():
+    all_splits = df if all_splits is None else all_splits.unionByName(df)
+split_checks = []
+for name, year in SPLITS.items():
+    df = saved_splits[name]
+    schema = [(f.name, f.dataType.simpleString()) for f in df.schema]
+    n, n_ids = df.count(), df.select("return_id").distinct().count()
+    other_year = df.filter(F.col("tax_year").isNull() | (F.col("tax_year") != year)).count()
+    expected_n = features_saved.filter(F.col("tax_year") == year).count()
+    lw = last_write(SPLIT_TABLES[name])
+    split_checks += [
+        (f"{name}: schema is the three contract columns", EXPECTED_SCHEMA, schema, schema == EXPECTED_SCHEMA),
+        (f"{name}: rows with a tax_year other than {year}", 0, other_year, other_year == 0),
+        (f"{name}: rows equal return_features rows for {year}", expected_n, n, n == expected_n),
+        (f"{name}: one row per return_id (no appended copies)", n, n_ids, n_ids == n),
+        (f"{name}: latest write replaced the table", sorted(REPLACE_OPS), lw, lw is not None and lw["operation"] in REPLACE_OPS),
+    ]
+union_n, union_ids = all_splits.count(), all_splits.select("return_id").distinct().count()
+missing = features_saved.exceptAll(all_splits).count()
+extra = all_splits.exceptAll(features_saved).count()
+lw_features = last_write(FEATURES_TABLE)
+split_checks += [
+    ("all splits: total rows equal accepted returns", len(source_rows), union_n, union_n == len(source_rows)),
+    ("all splits: no return_id in more than one table", union_n, union_ids, union_ids == union_n),
+    ("return_features rows missing from the splits (IDs and values)", 0, missing, missing == 0),
+    ("split rows not in return_features (IDs and values)", 0, extra, extra == 0),
+    ("return_features: latest write replaced the table", sorted(REPLACE_OPS), lw_features,
+     lw_features is not None and lw_features["operation"] in REPLACE_OPS),
+]
+run_checks("4b. Year-table readback checks", split_checks)
+
+# 4c. Snapshots: sorted readback of each year table for this run, plus the stable final copies.
+for name, df in saved_splits.items():
+    text = df.orderBy("return_id").toPandas().to_csv(index=False)
+    for path in [RUN_DIR / f"{name}.csv", repo_root / "outputs" / f"{name}.csv"]:
+        path.write_text(text, encoding="utf-8")
+
+# 4d. Save every check of this run and mark the run complete. Only now does it count as successful.
+pd.DataFrame(CHECK_RESULTS, columns=["stage", "check", "expected", "actual", "passed"]).to_csv(
+    RUN_DIR / "checks.csv", index=False)
+run_manifest["year_tables"] = {
+    name: {"table": SPLIT_TABLES[name], "tax_year": year, "rows": saved_splits[name].count(),
+           "delta_version": last_write(SPLIT_TABLES[name])["version"]}
+    for name, year in SPLITS.items()}
+run_manifest["snapshots_sha256"] = {f: hashlib.sha256((RUN_DIR / f).read_bytes()).hexdigest() for f in SNAPSHOT_FILES}
+run_manifest["checks"] = {"file": "checks.csv", "total": len(CHECK_RESULTS),
+                          "passed": sum(1 for r in CHECK_RESULTS if r[-1])}
+run_manifest["run_completed_utc"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+run_manifest["status"] = "succeeded"
+(RUN_DIR / "run.json").write_text(json.dumps(run_manifest, indent=2) + "\n", encoding="utf-8")
+print(f"4d. Run {RUN_ID} marked succeeded: {RUN_DIR / 'run.json'}")
+
+# 4e. Compare the two latest successful runs from their saved snapshot files (reproducible from outputs/).
+def read_snapshot(path):
+    data = path.read_bytes()
+    rows = list(csv.reader(io.StringIO(data.decode("utf-8"))))
+    return data, rows[0], rows[1:]
+
+succeeded, skipped = [], []
+for run_dir in sorted(p for p in RUNS_ROOT.iterdir() if p.is_dir()):
+    manifest_path = run_dir / "run.json"
+    info = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+    if info.get("status") == "succeeded":
+        succeeded.append((run_dir, info))
+    else:
+        skipped.append({"run_id": run_dir.name, "run_started_utc": info.get("run_started_utc"),
+                        "reason": "partial run: run.json has no status 'succeeded' (stopped before Outcome 4 "
+                                  "completed); not one of the two successful runs"})
+
+comparison = {"generated_by_run": RUN_ID, "method": "byte-level SHA-256 and row-by-row multiset diff of the sorted "
+              "snapshot CSVs saved in each run folder", "skipped_runs": skipped}
+if len(succeeded) < 2:
+    comparison.update(compared=False, note="Fewer than two successful runs; run the whole notebook again.")
+else:
+    (dir_a, run_a), (dir_b, run_b) = succeeded[-2:]
+    tables = {}
+    for f in SNAPSHOT_FILES:
+        bytes_a, head_a, rows_a = read_snapshot(dir_a / f)
+        bytes_b, head_b, rows_b = read_snapshot(dir_b / f)
+        only_a = sorted((Counter(map(tuple, rows_a)) - Counter(map(tuple, rows_b))).elements())
+        only_b = sorted((Counter(map(tuple, rows_b)) - Counter(map(tuple, rows_a))).elements())
+        tables[f] = {"sha256_run_a": hashlib.sha256(bytes_a).hexdigest(), "sha256_run_b": hashlib.sha256(bytes_b).hexdigest(),
+                     "rows_run_a": len(rows_a), "rows_run_b": len(rows_b), "header_match": head_a == head_b,
+                     "return_ids": sorted(r[0] for r in rows_b),
+                     "rows_only_in_run_a": [list(r) for r in only_a], "rows_only_in_run_b": [list(r) for r in only_b]}
+        tables[f]["match"] = (tables[f]["sha256_run_a"] == tables[f]["sha256_run_b"] and head_a == head_b
+                              and not only_a and not only_b)
+    comparison.update(
+        compared=True,
+        runs={label: {k: run.get(k) for k in ("run_id", "run_started_utc", "run_completed_utc", "notebook_url")}
+              for label, run in (("run_a", run_a), ("run_b", run_b))},
+        tables=tables, match=all(t["match"] for t in tables.values()))
+(repo_root / "outputs" / "run_comparison.json").write_text(json.dumps(comparison, indent=2) + "\n", encoding="utf-8")
+
+print("4e. Two-run comparison saved to", repo_root / "outputs" / "run_comparison.json")
+if comparison["compared"]:
+    print({label: r["run_id"] for label, r in comparison["runs"].items()}, "| skipped:", [s["run_id"] for s in skipped])
+    display(spark.createDataFrame(
+        [(f, t["rows_run_a"], t["rows_run_b"], t["sha256_run_a"][:12], t["sha256_run_b"][:12],
+          len(t["rows_only_in_run_a"]) + len(t["rows_only_in_run_b"]), t["match"]) for f, t in comparison["tables"].items()],
+        "snapshot string, rows_run_a long, rows_run_b long, sha256_run_a string, sha256_run_b string, differing_rows long, match boolean"))
+    if not comparison["match"]:
+        raise AssertionError("The two latest successful runs differ; see outputs/run_comparison.json")
+else:
+    print(comparison["note"], "| skipped:", [s["run_id"] for s in skipped])
+
+# COMMAND ----------
+
+# DBTITLE 1,Handoff summary
+# MAGIC %md
+# MAGIC ### Handoff
+# MAGIC
+# MAGIC **Inputs:**
+# MAGIC * `training.to6_challenge3_inputs.returns_corrected`: the accepted batch.
+# MAGIC * `training.to6_challenge3_inputs.returns_initial`: rejected; R01 is duplicated and R02 has a null income.
+# MAGIC * Lineage: `training.to6_challenge3_inputs.source_lineage`, which traces both batches to `parsed_source`.
+# MAGIC
+# MAGIC **Outputs**, all in `training.to6_c3_48f0f0239a0e`:
+# MAGIC * `return_features`: 12 rows.
+# MAGIC * `features_train` (2022), `features_validation` (2023) and `features_test` (2024): 4 rows each.
+# MAGIC
+# MAGIC **Ratio:** `deduction_to_income = deduction / income`, and NULL when income = 0 (R03, R09). The filer ID and raw amounts are excluded.
+# MAGIC
+# MAGIC **Checks:**
+# MAGIC * completeness, uniqueness and nonnegative rules on both batches
+# MAGIC * readback of every saved table
+# MAGIC * nonzero expected value: R01 = 0.2
+# MAGIC * zero-income cases with a null ratio
+# MAGIC * year assignment, one copy per return and no appended copies
+# MAGIC * an IDs-and-values comparison of the two latest successful runs (`outputs/run_comparison.json`)
+# MAGIC
+# MAGIC **Not verified:**
+# MAGIC * labels and the prediction-time availability of features (model leakage), which are left to later modelling work
+# MAGIC * the starter GitHub test check, which executes `notebook.py` with a fake `spark` and is expected to fail
+# MAGIC
+# MAGIC The full handoff is in `SUBMISSION.md`.

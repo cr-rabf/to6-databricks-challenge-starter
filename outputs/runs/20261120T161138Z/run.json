@@ -43,5 +43,22 @@
       "decision": "accepted"
     }
   },
-  "accepted_table": "training.to6_challenge3_inputs.returns_corrected"
+  "accepted_table": "training.to6_challenge3_inputs.returns_corrected",
+  "return_features": {
+    "table": "training.to6_c3_48f0f0239a0e.return_features",
+    "delta_version": 1,
+    "rows": 12,
+    "ratio_definition": "deduction / income; NULL when income = 0",
+    "nonzero_check": {
+      "return_id": "R01",
+      "expected": 0.2,
+      "saved": 0.2
+    },
+    "zero_income_null_ratio": [
+      "R03",
+      "R09"
+    ],
+    "snapshot_file": "return_features.csv",
+    "snapshot_sha256": "382f97d69814056f81e58f6166b4b5761e46a17cfeb682046fd22b785827b2fb"
+  }
 }

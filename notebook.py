@@ -282,10 +282,152 @@ print("2f. Run manifest saved to", RUN_DIR / "run.json")
 # MAGIC %md
 # MAGIC ## 3. Deliver a checked feature table
 # MAGIC Implement the task's data contract and verify the saved result by reading it back.
+# MAGIC
+# MAGIC **Contract for `return_features`** (saved to the individual output schema):
+# MAGIC * Exactly three columns: `return_id` (string), `tax_year` (int), `deduction_to_income` (double).
+# MAGIC * `deduction_to_income = deduction / income`, and **NULL when income = 0**. A zero-income return stays in the table. The rule is explicit because ANSI mode raises `DIVIDE_BY_ZERO` on a plain division.
+# MAGIC * Every accepted return appears exactly once. `taxpayer_id`, `income` and `deduction` are excluded (need-to-know).
+# MAGIC * Built only from `ACCEPTED_TABLE` (gate 3a). The table is overwritten on each run, so there are no appended copies.
+# MAGIC
+# MAGIC **Checks:**
+# MAGIC * **Pre-write (3c):** row count, `return_id` uniqueness and the ID set against the accepted source.
+# MAGIC * **Readback (3e)** of the saved table from the catalog:
+# MAGIC   * exact schema
+# MAGIC   * row count and uniqueness
+# MAGIC   * the same ID set as the source
+# MAGIC   * rows per year
+# MAGIC   * a nonzero case: R01 = 20 / 100 = 0.2, hand-derived and recomputed from the source
+# MAGIC   * the zero-income cases R03 and R09, which must have a null ratio
+# MAGIC   * a full Python recompute of every ratio
+# MAGIC
+# MAGIC **Evidence (3f):** `outputs/runs/<run_id>/return_features.csv` (sorted readback snapshot), `outputs/return_features.csv` (stable final copy) and a `return_features` entry in `run.json` with the Delta version and the snapshot SHA-256.
 
 # COMMAND ----------
 
-# Your implementation and verification here.
+# DBTITLE 1,Build, save and verify return_features
+# Outcome 3: build, save and verify return_features from the accepted batch only.
+import hashlib
+import json
+from pyspark.sql import functions as F
+
+FEATURES_TABLE = f"{OUTPUT_SCHEMA}.return_features"
+EXPECTED_SCHEMA = [("return_id", "string"), ("tax_year", "int"), ("deduction_to_income", "double")]
+TOL = 1e-12
+
+def run_checks(title, checks):
+    """Show each check with expected and actual values, then stop the run if any failed."""
+    print(title)
+    display(spark.createDataFrame([(c, str(e), str(a), bool(p)) for c, e, a, p in checks],
+                                  "check string, expected string, actual string, passed boolean"))
+    failed = [c for c, _, _, p in checks if not p]
+    if failed:
+        raise AssertionError(f"{title} failed: {failed}")
+
+# 3a. Gate: features may only come from the batch that passed Outcome 2.
+if not (ACCEPTED_TABLE == CORRECTED_TABLE and corrected_summary["decision"] == "accepted"):
+    raise AssertionError("No accepted batch; run Outcome 2 first. Feature output not written.")
+print(f"3a. Gate passed: building features from {ACCEPTED_TABLE} ({corrected_summary['decision']})")
+
+# 3b. Build the features. Explicit zero-income rule: ANSI mode would raise DIVIDE_BY_ZERO on a plain division.
+source = spark.table(ACCEPTED_TABLE)
+features = source.select(
+    "return_id",
+    "tax_year",
+    F.when(F.col("income") == 0, F.lit(None).cast("double"))
+     .otherwise(F.col("deduction").cast("double") / F.col("income"))
+     .alias("deduction_to_income"),
+)  # taxpayer_id, income and deduction are not selected (need-to-know).
+
+# 3c. Pre-write checks against the accepted source.
+src_ids, feat_ids = source.select("return_id"), features.select("return_id")
+src_n, feat_n = source.count(), features.count()
+run_checks("3c. Pre-write checks", [
+    ("row count equals accepted source", src_n, feat_n, feat_n == src_n),
+    ("return_id unique", feat_n, feat_ids.distinct().count(), feat_ids.distinct().count() == feat_n),
+    ("source IDs missing from features", 0, src_ids.exceptAll(feat_ids).count(), src_ids.exceptAll(feat_ids).count() == 0),
+    ("feature IDs not in source", 0, feat_ids.exceptAll(src_ids).count(), feat_ids.exceptAll(src_ids).count() == 0),
+])
+
+# 3d. Save, replacing any earlier version (no appended copies on rerun).
+(features.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(FEATURES_TABLE))
+spark.sql(f"COMMENT ON TABLE {FEATURES_TABLE} IS 'One row per accepted return from {ACCEPTED_TABLE}. "
+          "deduction_to_income = deduction / income; NULL when income = 0. No filer ID or raw amounts.'")
+print(f"3d. Saved {FEATURES_TABLE}")
+
+# 3e. Read the saved table back (from the catalog, not the in-memory DataFrame) and verify it.
+saved = spark.table(FEATURES_TABLE)
+print(f"3e. Readback of {FEATURES_TABLE} (all rows)")
+display(saved.orderBy("return_id"))
+saved_rows = {r["return_id"]: r for r in saved.collect()}
+source_rows = {r["return_id"]: r for r in source.collect()}
+actual_schema = [(f.name, f.dataType.simpleString()) for f in saved.schema]
+by_year = {r["tax_year"]: r["count"] for r in saved.groupBy("tax_year").count().collect()}
+src_by_year = {r["tax_year"]: r["count"] for r in source.groupBy("tax_year").count().collect()}
+
+# Nonzero case: R01 hand-derived as 20 / 100 = 0.2, and recomputed in Python from its source row.
+r01_src, r01_saved = source_rows["R01"], saved_rows.get("R01")
+r01_expected = r01_src["deduction"] / r01_src["income"]
+r01_actual = r01_saved["deduction_to_income"] if r01_saved else None
+
+# Zero-income cases: every source return with income 0 must be present with a null ratio.
+zero_ids = sorted(k for k, r in source_rows.items() if r["income"] == 0)
+zero_ok = len(zero_ids) > 0 and all(k in saved_rows and saved_rows[k]["deduction_to_income"] is None for k in zero_ids)
+
+# Full recompute in Python, independent of the Spark expression used to build the table.
+def expected_ratio(r):
+    return None if r["income"] == 0 else r["deduction"] / r["income"]
+mismatches = sorted(
+    k for k, r in source_rows.items()
+    if k not in saved_rows
+    or (expected_ratio(r) is None) != (saved_rows[k]["deduction_to_income"] is None)
+    or (expected_ratio(r) is not None and abs(saved_rows[k]["deduction_to_income"] - expected_ratio(r)) > TOL)
+    or saved_rows[k]["tax_year"] != r["tax_year"]
+)
+
+run_checks("3e. Readback checks on the saved table", [
+    ("schema is exactly the three contract columns", EXPECTED_SCHEMA, actual_schema, actual_schema == EXPECTED_SCHEMA),
+    ("row count equals accepted source", src_n, saved.count(), saved.count() == src_n),
+    ("return_id unique", saved.count(), len(saved_rows), len(saved_rows) == saved.count()),
+    ("same return_id set as source", sorted(source_rows), sorted(saved_rows), set(saved_rows) == set(source_rows)),
+    ("no null return_id or tax_year", 0, saved.filter(F.col("return_id").isNull() | F.col("tax_year").isNull()).count(),
+     saved.filter(F.col("return_id").isNull() | F.col("tax_year").isNull()).count() == 0),
+    ("rows per tax_year match source", dict(sorted(src_by_year.items())), dict(sorted(by_year.items())), by_year == src_by_year),
+    ("R01 expected value is hand-derived 20/100", 0.2, r01_expected, abs(r01_expected - 0.2) <= TOL),
+    ("R01 saved ratio equals expected", r01_expected, r01_actual, r01_actual is not None and abs(r01_actual - r01_expected) <= TOL),
+    ("zero-income returns present with null ratio", f"{zero_ids}: null",
+     {k: (saved_rows[k]["deduction_to_income"] if k in saved_rows else "missing") for k in zero_ids}, zero_ok),
+    ("all ratios match Python recompute from source", [], mismatches, not mismatches),
+])
+
+# 3f. Evidence: sorted readback snapshot for this run plus the stable final copy, and the manifest entry.
+snapshot_csv = saved.orderBy("return_id").toPandas().to_csv(index=False)
+for path in [RUN_DIR / "return_features.csv", repo_root / "outputs" / "return_features.csv"]:
+    path.write_text(snapshot_csv, encoding="utf-8")
+run_manifest["return_features"] = {
+    "table": FEATURES_TABLE,
+    "delta_version": table_version(FEATURES_TABLE),
+    "rows": len(saved_rows),
+    "ratio_definition": "deduction / income; NULL when income = 0",
+    "nonzero_check": {"return_id": "R01", "expected": r01_expected, "saved": r01_actual},
+    "zero_income_null_ratio": zero_ids,
+    "snapshot_file": "return_features.csv",
+    "snapshot_sha256": hashlib.sha256(snapshot_csv.encode("utf-8")).hexdigest(),
+}
+(RUN_DIR / "run.json").write_text(json.dumps(run_manifest, indent=2) + "\n", encoding="utf-8")
+print("3f. Snapshot and manifest saved:", RUN_DIR / "return_features.csv", RUN_DIR / "run.json")
+print(json.dumps(run_manifest["return_features"], indent=2))
+
+# COMMAND ----------
+
+# DBTITLE 1,Outcome 3 results
+# MAGIC %md
+# MAGIC ### Feature table results
+# MAGIC
+# MAGIC * `return_features` holds all **12 accepted returns** (4 per year for 2022, 2023 and 2024). There is one row per `return_id`, and the columns are exactly `return_id`, `tax_year` and `deduction_to_income`.
+# MAGIC * **Nonzero check:** R01 has income 100 and deduction 20, so the expected ratio is 20 / 100 = **0.2**. The saved value read back from the table is 0.2 (tolerance 1e-12). Another example: R02 = 33 / 200 = 0.165.
+# MAGIC * **Zero-income check:** R03 (2022) and R09 (2024) have income 0. Both are present in the saved table with a **null** ratio.
+# MAGIC * **Full recompute:** every saved ratio matches a Python recompute from `returns_corrected`, with 0 mismatches.
+# MAGIC * **Not verified here:** whether the ratio is a useful or leakage-free model feature. That is left to later modelling work.
 
 # COMMAND ----------
 
